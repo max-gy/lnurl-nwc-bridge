@@ -1,4 +1,4 @@
-# LNURL-pay / NWC API
+# lnurl-nwc-bridge
 
 A Go service for static product QR codes with prices in EUR. It obtains Lightning
 invoices from a private LNbits instance over Nostr Wallet Connect (NWC). The
@@ -28,8 +28,8 @@ Requires Go 1.26.11 or newer. The module's `toolchain` directive selects the
 patched toolchain automatically when supported by the installed Go command.
 
 ```sh
-git clone https://github.com/max-gy/lnurl-nwc-payment-proxy.git
-cd lnurl-nwc-payment-proxy
+git clone https://github.com/max-gy/lnurl-nwc-bridge.git
+cd lnurl-nwc-bridge
 cp config.example.json config.json
 ```
 
