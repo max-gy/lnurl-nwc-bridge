@@ -118,17 +118,23 @@ func (a *API) metadata(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "home wallet is temporarily unavailable", ErrWalletOffline)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), a.cfg.Timeout())
-	defer cancel()
-	exchangeRate, err := a.rates.EURPerBTC(ctx)
-	if err != nil {
-		a.fail(w, "fresh EUR exchange rate unavailable", err)
-		return
-	}
-	amount, err := QuoteMSats(p.EURCents, exchangeRate)
-	if err != nil {
-		a.fail(w, "cannot quote this price", err)
-		return
+	var amount, minAmount, maxAmount int64
+	if p.Currency != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), a.cfg.Timeout())
+		exchangeRate, err := a.rates.FiatPerBTC(ctx, p.Currency)
+		cancel()
+		if err != nil {
+			a.fail(w, "fresh EUR exchange rate unavailable", err)
+			return
+		}
+		amount, err = QuoteMSats(p.Currency, p.Price, exchangeRate)
+		if err != nil {
+			a.fail(w, "cannot quote this price", err)
+			return
+		}
+		minAmount, maxAmount = amount, amount
+	} else {
+		minAmount, maxAmount = p.MinSats*1000, p.MaxSats*1000
 	}
 	rawMetadata, err := json.Marshal([][]string{{"text/plain", p.Description}})
 	if err != nil {
@@ -142,9 +148,10 @@ func (a *API) metadata(w http.ResponseWriter, r *http.Request) {
 	}
 	q := Quote{
 		ID: hex.EncodeToString(id), Product: r.PathValue("product"),
-		Wallet: p.Wallet, Amount: amount, Metadata: string(rawMetadata),
-		Expires: time.Now().Add(time.Duration(a.cfg.QuoteTTLSeconds) * time.Second).Unix(),
-		State:   "new",
+		Wallet: p.Wallet, Amount: amount, MinAmount: minAmount, MaxAmount: maxAmount,
+		Metadata: string(rawMetadata),
+		Expires:  time.Now().Add(time.Duration(a.cfg.QuoteTTLSeconds) * time.Second).Unix(),
+		State:    "new",
 	}
 	if err := a.store.Create(q); err != nil {
 		a.fail(w, "quote service temporarily unavailable", err)
@@ -158,7 +165,7 @@ func (a *API) metadata(w http.ResponseWriter, r *http.Request) {
 		Metadata    string `json:"metadata"`
 	}{
 		Tag: "payRequest", Callback: strings.TrimSuffix(a.cfg.PublicURL, "/") + "/quote/" + q.ID,
-		MinSendable: amount, MaxSendable: amount, Metadata: q.Metadata,
+		MinSendable: minAmount, MaxSendable: maxAmount, Metadata: q.Metadata,
 	})
 }
 

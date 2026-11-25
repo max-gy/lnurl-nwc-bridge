@@ -2,14 +2,15 @@
 
 A small Go service that exposes LNURL-pay endpoints and obtains Lightning
 invoices through Nostr Wallet Connect (NWC). It is designed for static product
-links with EUR-denominated prices and a separately operated Lightning backend.
+links with fiat-denominated prices and a separately operated Lightning backend.
 
 The service requests and looks up invoices; it does not send payments or manage
 wallet recovery material.
 
 ## Features
 
-- Static LNURL-pay product endpoints and short-lived BTC/EUR quotes.
+- Static LNURL-pay product endpoints, short-lived BTC/fiat quotes, and
+  variable-amount donations.
 - Multiple receiving wallets through restricted NWC connections.
 - NIP-44 support, with optional legacy NIP-04 compatibility.
 - Invoice amount, metadata, network, signature, and expiry validation.
@@ -38,9 +39,13 @@ selected with `-config`.
 Set `products_file` to a separate JSON object containing product definitions;
 see [products.example.json](products.example.json). Product IDs become the
 stable `/lnurl/{product}` endpoints. Each definition specifies a description,
-a price in EUR cents, and a configured receiving wallet. Restart the service
-after changing products. Inline `products` in the main configuration remains
-supported for compatibility, but cannot be combined with `products_file`.
+a configured receiving wallet, and either an uppercase ISO 4217 `currency` and
+minor-unit `price` or `min_sats` and `max_sats` for a payer-selected amount such
+as a donation. For example, `100` means €1.00 with `EUR`, $1.00 with `USD`, or
+¥100 with `JPY`.
+Restart the service after changing products. Inline `products` in the main
+configuration remains supported for compatibility, but cannot be combined with
+`products_file`.
 
 NWC pairing URIs are credentials. Configure them through separate secret files,
 not directly in the JSON configuration, environment variables, or source

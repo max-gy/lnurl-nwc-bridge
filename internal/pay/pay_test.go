@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
@@ -31,21 +32,25 @@ func testLogger() *slog.Logger {
 
 func TestQuoteMSats(t *testing.T) {
 	for _, tt := range []struct {
-		name  string
-		cents int64
-		rate  string
-		want  int64
+		name     string
+		currency string
+		price    int64
+		rate     string
+		want     int64
 	}{
-		{"exact", 350, "70000", 5000000},
-		{"round up whole sats", 100, "60000", 1667000},
-		{"decimal rate", 350, "70000.01", 5000000},
-		{"invalid rate", 100, "0", 0},
-		{"invalid price", -1, "60000", 0},
-		{"overflow", 100000000, "0.000000001", 0},
+		{name: "EUR minor units", currency: "EUR", price: 350, rate: "70000", want: 5000000},
+		{name: "USD minor units", currency: "USD", price: 100, rate: "60000", want: 1667000},
+		{name: "JPY major units", currency: "JPY", price: 100, rate: "10000000", want: 1000000},
+		{name: "KWD minor units", currency: "KWD", price: 1000, rate: "30000", want: 3334000},
+		{name: "decimal rate", currency: "EUR", price: 350, rate: "70000.01", want: 5000000},
+		{name: "invalid rate", currency: "EUR", price: 100, rate: "0"},
+		{name: "invalid price", currency: "EUR", price: -1, rate: "60000"},
+		{name: "invalid currency", currency: "INVALID", price: 100, rate: "60000"},
+		{name: "overflow", currency: "EUR", price: 100000000, rate: "0.000000001"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			rate, _ := new(big.Rat).SetString(tt.rate)
-			got, err := QuoteMSats(tt.cents, rate)
+			got, err := QuoteMSats(tt.currency, tt.price, rate)
 			if tt.want == 0 {
 				if err == nil {
 					t.Fatal("expected invalid price/rate to fail")
@@ -79,12 +84,12 @@ func TestRatesFreshnessAndCache(t *testing.T) {
 			defer server.Close()
 			rates := NewRates(2 * time.Minute)
 			rates.url, rates.client = server.URL, server.Client()
-			_, err := rates.EURPerBTC(context.Background())
+			_, err := rates.FiatPerBTC(context.Background(), "EUR")
 			if (err == nil) != tt.ok {
 				t.Fatalf("unexpected rate error: %v", err)
 			}
 			if tt.ok {
-				if _, err := rates.EURPerBTC(context.Background()); err != nil {
+				if _, err := rates.FiatPerBTC(context.Background(), "EUR"); err != nil {
 					t.Fatal(err)
 				}
 				if calls.Load() != 1 {
@@ -93,6 +98,28 @@ func TestRatesFreshnessAndCache(t *testing.T) {
 			}
 		})
 	}
+	t.Run("separate currency caches", func(t *testing.T) {
+		var calls atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			code := r.URL.Query().Get("vs_currencies")
+			if code != "eur" && code != "usd" {
+				t.Errorf("unexpected currency: %q", code)
+			}
+			fmt.Fprintf(w, `{"bitcoin":{%q:70000,"last_updated_at":%d}}`, code, time.Now().Unix())
+		}))
+		defer server.Close()
+		rates := NewRates(time.Minute)
+		rates.url, rates.client = server.URL, server.Client()
+		for _, code := range []string{"EUR", "USD", "EUR", "USD"} {
+			if _, err := rates.FiatPerBTC(context.Background(), code); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if calls.Load() != 2 {
+			t.Fatalf("expected one request per currency, got %d", calls.Load())
+		}
+	})
 	t.Run("no stale fallback", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -100,9 +127,10 @@ func TestRatesFreshnessAndCache(t *testing.T) {
 		defer server.Close()
 		rates := NewRates(time.Minute)
 		rates.url, rates.client = server.URL, server.Client()
-		rates.value = big.NewRat(70000, 1)
-		rates.updated, rates.fetched = time.Now().Add(-time.Hour), time.Now().Add(-time.Hour)
-		if _, err := rates.EURPerBTC(context.Background()); err == nil {
+		rates.rates["eur"] = cachedRate{
+			value: big.NewRat(70000, 1), updated: time.Now().Add(-time.Hour), fetched: time.Now().Add(-time.Hour),
+		}
+		if _, err := rates.FiatPerBTC(context.Background(), "EUR"); err == nil {
 			t.Fatal("provider failure must not return an old rate")
 		}
 	})
@@ -130,7 +158,7 @@ type fixedRates struct {
 	err   error
 }
 
-func (r fixedRates) EURPerBTC(context.Context) (*big.Rat, error) {
+func (r fixedRates) FiatPerBTC(context.Context, string) (*big.Rat, error) {
 	return r.value, r.err
 }
 
@@ -178,7 +206,7 @@ func newTestAPI(t *testing.T, wallet *fakeWallet) (*API, http.Handler) {
 		QuoteTTLSeconds: 120, InvoiceTTLSeconds: 300, RequestTimeoutSeconds: 2,
 		RequestsPerSecond: 10000, Burst: 10000,
 		Products: map[string]Product{
-			"coffee": {Description: "Coffee <large>", EURCents: 350, Wallet: "shop"},
+			"coffee": {Description: "Coffee <large>", Currency: "EUR", Price: 350, Wallet: "shop"},
 		},
 	}
 	a := NewAPI(cfg, store, fixedRates{value: big.NewRat(70000, 1)},
@@ -221,6 +249,59 @@ func newQuote(t *testing.T, handler http.Handler) (string, string) {
 	}
 	callback := strings.TrimPrefix(stringField(t, data, "callback"), "https://pay.example.com")
 	return callback, stringField(t, data, "metadata")
+}
+
+func TestVariableAmountDonation(t *testing.T) {
+	wallet := &fakeWallet{}
+	api, handler := newTestAPI(t, wallet)
+	api.cfg.Products["donation"] = Product{
+		Description: "Donation", MinSats: 21, MaxSats: 100000, Wallet: "shop",
+	}
+	data := getJSON(t, handler, "/lnurl/donation")
+	if string(data["minSendable"]) != "21000" || string(data["maxSendable"]) != "100000000" {
+		t.Fatalf("incorrect donation limits: %v", data)
+	}
+	callback := strings.TrimPrefix(stringField(t, data, "callback"), "https://pay.example.com")
+	first := getJSON(t, handler, callback+"?amount=12345000")
+	invoice := stringField(t, first, "pr")
+	decoded, err := zpay32.Decode(invoice, &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.MilliSat == nil || *decoded.MilliSat != 12345000 {
+		t.Fatalf("invoice does not contain selected donation amount: %v", decoded.MilliSat)
+	}
+	if wallet.calls.Load() != 1 {
+		t.Fatalf("wallet calls = %d; want 1", wallet.calls.Load())
+	}
+	second := getJSON(t, handler, callback+"?amount=12345000")
+	if stringField(t, second, "pr") != invoice || wallet.calls.Load() != 1 {
+		t.Fatal("retry must return the original donation invoice")
+	}
+	getJSON(t, handler, callback+"?amount=12346000")
+	if wallet.calls.Load() != 1 {
+		t.Fatal("retry with another amount reached the wallet")
+	}
+}
+
+func TestVariableAmountDonationRejectsOutOfRangeAmount(t *testing.T) {
+	wallet := &fakeWallet{}
+	api, handler := newTestAPI(t, wallet)
+	api.cfg.Products["donation"] = Product{
+		Description: "Donation", MinSats: 21, MaxSats: 1000, Wallet: "shop",
+	}
+	data := getJSON(t, handler, "/lnurl/donation")
+	callback := strings.TrimPrefix(stringField(t, data, "callback"), "https://pay.example.com")
+	for _, amount := range []string{"20999", "1000001"} {
+		getJSON(t, handler, callback+"?amount="+amount)
+	}
+	if wallet.calls.Load() != 0 {
+		t.Fatal("out-of-range donation reached the wallet")
+	}
+	getJSON(t, handler, callback+"?amount=21000")
+	if wallet.calls.Load() != 1 {
+		t.Fatal("rejected amount must not consume the donation quote")
+	}
 }
 
 func TestLNURLQuoteInvoiceAndIdempotency(t *testing.T) {

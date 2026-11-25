@@ -25,6 +25,8 @@ type Quote struct {
 	Product     string `json:"product"`
 	Wallet      string `json:"wallet"`
 	Amount      int64  `json:"amount"`
+	MinAmount   int64  `json:"min_amount,omitempty"`
+	MaxAmount   int64  `json:"max_amount,omitempty"`
 	Metadata    string `json:"metadata"`
 	Expires     int64  `json:"expires"`
 	State       string `json:"state"`
@@ -113,14 +115,22 @@ func (s *Store) Claim(id string, amount int64, now time.Time) (Quote, bool, erro
 		if now.Unix() >= q.Expires || (q.Invoice != "" && now.Unix() >= q.InvoiceEnd) {
 			return ErrExpiredQuote
 		}
-		if amount != q.Amount {
-			return ErrAmount
-		}
 		if q.State == "issued" {
+			if amount != q.Amount {
+				return ErrAmount
+			}
 			return nil
 		}
 		if q.State != "new" {
 			return ErrUncertain
+		}
+		if q.MinAmount > 0 {
+			if amount < q.MinAmount || amount > q.MaxAmount {
+				return ErrAmount
+			}
+			q.Amount = amount
+		} else if amount != q.Amount {
+			return ErrAmount
 		}
 		q.State, fresh = "creating", true
 		return saveQuote(b, q)
