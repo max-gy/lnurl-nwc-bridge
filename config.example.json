@@ -1,0 +1,26 @@
+{
+  "listen": ":8080",
+  "public_url": "https://pay.example.com",
+  "db_path": "/var/lib/lnurl-api/quotes.db",
+  "network": "mainnet",
+  "quote_ttl_seconds": 120,
+  "invoice_ttl_seconds": 300,
+  "request_timeout_seconds": 15,
+  "rate_max_age_seconds": 120,
+  "requests_per_second": 5,
+  "burst": 20,
+  "max_quotes": 10000,
+  "wallets": {
+    "shop": {
+      "nwc_uri_file": "/run/secrets/nwc",
+      "allow_legacy_nip04": true
+    }
+  },
+  "products": {
+    "coffee": {
+      "description": "Coffee",
+      "eur_cents": 350,
+      "wallet": "shop"
+    }
+  }
+}
