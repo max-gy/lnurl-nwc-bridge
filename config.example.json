@@ -16,11 +16,5 @@
       "allow_legacy_nip04": true
     }
   },
-  "products": {
-    "coffee": {
-      "description": "Coffee",
-      "eur_cents": 350,
-      "wallet": "shop"
-    }
-  }
+  "products_file": "/etc/lnurl-api/products.json"
 }

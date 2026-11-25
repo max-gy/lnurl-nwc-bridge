@@ -36,6 +36,7 @@ type Config struct {
 	Burst                 int                     `json:"burst"`
 	MaxQuotes             int                     `json:"max_quotes"`
 	Wallets               map[string]WalletConfig `json:"wallets"`
+	ProductsFile          string                  `json:"products_file"`
 	Products              map[string]Product      `json:"products"`
 }
 
@@ -60,7 +61,35 @@ func LoadConfig(path string) (Config, error) {
 	if err := d.Decode(new(any)); err != io.EOF {
 		return cfg, errors.New("configuration must contain exactly one JSON object")
 	}
+	if cfg.ProductsFile != "" {
+		if cfg.Products != nil {
+			return cfg, errors.New("products_file and inline products are mutually exclusive")
+		}
+		products, err := loadProducts(cfg.ProductsFile)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.Products = products
+	}
 	return cfg, cfg.Validate()
+}
+
+func loadProducts(path string) (map[string]Product, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open products file: %w", err)
+	}
+	defer f.Close()
+	var products map[string]Product
+	d := json.NewDecoder(io.LimitReader(f, 1<<20))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&products); err != nil {
+		return nil, fmt.Errorf("decode products file: %w", err)
+	}
+	if err := d.Decode(new(any)); err != io.EOF {
+		return nil, errors.New("products file must contain exactly one JSON object")
+	}
+	return products, nil
 }
 
 func (c Config) Validate() error {
