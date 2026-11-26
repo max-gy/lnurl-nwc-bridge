@@ -48,7 +48,7 @@ if [[ -n $(git status --porcelain) ]]; then
 fi
 
 commit=$(git rev-parse HEAD)
-if [[ $(git rev-parse "refs/tags/$version" 2>/dev/null || true) != "$commit" ]]; then
+if [[ $(git rev-parse "refs/tags/$version^{}" 2>/dev/null || true) != "$commit" ]]; then
   printf 'Tag %s must exist locally and point to HEAD (%s).\n' "$version" "$commit" >&2
   exit 1
 fi
